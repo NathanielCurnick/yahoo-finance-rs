@@ -7,7 +7,7 @@
 //! * Historical quote information [OHCL Data](https://en.wikipedia.org/wiki/Open-high-low-close_chart) + volume
 //! * Relatively real-time quote informaton with comparible performance to the real-time updates on their website
 //! * Company profile information including address, sector, industry, etc.
-//! 
+//!
 //! ## Quick Examples
 //!
 //! To retrieve the intraday high for the last 3 months of Apple you can use something like:
@@ -67,12 +67,9 @@ mod macros;
 pub use market_finance::{Bar, Interval, Quote, Timestamped, TradingSession};
 
 mod error;
-use snafu::Snafu;
 
-#[derive(Debug, Snafu)]
-pub struct Error(error::InnerError);
-
-pub type Result<T> = std::result::Result<T, Error>;
+#[derive(Debug)]
+pub struct Error(error::YahooError);
 
 mod yahoo;
 

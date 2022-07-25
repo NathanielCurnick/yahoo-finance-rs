@@ -1,18 +1,18 @@
+use crate::error::YahooError;
 use reqwest::Url;
 use serde::Deserialize;
-use snafu::{ ensure, OptionExt, ResultExt };
 use std::env;
-use std::io::{ BufRead, Cursor };
-
-use crate::{ error, Result };
+use std::io::{BufRead, Cursor};
 
 const DATA_VAR: &'static str = "root.App.main";
 
 const BASE_URL: &'static str = "https://finance.yahoo.com";
 
 ez_serde!(QuoteType {
-   #[serde(rename = "longName")] name: String,
-   #[serde(rename = "quoteType")] kind: String
+    #[serde(rename = "longName")]
+    name: String,
+    #[serde(rename = "quoteType")]
+    kind: String
 });
 
 ez_serde!(CompanyProfile {
@@ -44,39 +44,84 @@ ez_serde!(QuoteSummaryStore {
    #[serde(rename = "summaryProfile")] company_profile: Option<CompanyProfile>,
    #[serde(rename = "quoteType")] quote_type: QuoteType
 });
-ez_serde!(Stores { #[serde(rename = "QuoteSummaryStore")] quote_summary_store: QuoteSummaryStore });
+ez_serde!(Stores {
+    #[serde(rename = "QuoteSummaryStore")]
+    quote_summary_store: QuoteSummaryStore
+});
 ez_serde!(Dispatcher { stores: Stores });
-ez_serde!(Context { dispatcher: Dispatcher });
-ez_serde!(Response { context: Context });
+ez_serde!(Context {
+    dispatcher: Dispatcher
+});
+ez_serde!(YahooResponse { context: Context });
 
-pub async fn scrape<'a>(symbol: &'a str) -> Result<Stores> {
-   // construct the lookup URL - encoding it so we're safe
-   let base = format!("{}/quote/{}", env::var("TEST_URL").unwrap_or(BASE_URL.to_string()), symbol);
+pub async fn scrape<'a>(symbol: &'a str) -> Result<Stores, YahooError> {
+    // construct the lookup URL - encoding it so we're safe
+    let base = format!(
+        "{}/quote/{}",
+        env::var("TEST_URL").unwrap_or(BASE_URL.to_string()),
+        symbol
+    );
 
-   let mut url = Url::parse(base.as_str()).context(error::InternalURL { url: base })?;
-   url.query_pairs_mut().append_pair("p", symbol);
+    let mut url = match Url::parse(base.as_str()) {
+        Ok(x) => x,
+        Err(y) => {
+            return Err(YahooError::InternalURL {
+                url: base,
+                source: y,
+            })
+        }
+    };
 
-   // make the call - we do not really expect this to fail.
-   // ie - we won't 404 if the symbol doesn't exist
-   let response = reqwest::get(url.clone()).await.context(error::RequestFailed)?;
-   ensure!(
-      response.status().is_success(),
-      error::CallFailed{ url: response.url().to_string(), status: response.status().as_u16() }
-   );
+    url.query_pairs_mut().append_pair("p", symbol);
 
-   let line = Cursor::new(response.text().await.context(error::UnexpectedErrorRead { url: url.clone().to_string() })?)
-      .lines()
-      .map(|line| line.unwrap())
-      .filter(|line| line.trim().starts_with(DATA_VAR))
-      .next()
-      .context(error::MissingData { reason: "no quote data" })?;
-   
-   let data = line
-      .trim()
-      .trim_start_matches(DATA_VAR)
-      .trim_start_matches(|c| c == ' ' || c == '=')
-      .trim_end_matches(';');
+    // make the call - we do not really expect this to fail.
+    // ie - we won't 404 if the symbol doesn't exist
+    let response = match reqwest::get(url.clone()).await {
+        Ok(x) => match x.status().is_success() {
+            true => x,
+            false => {
+                return Err(YahooError::CallFailed {
+                    url: x.url().to_string(),
+                    status: x.status().as_u16(),
+                })
+            }
+        },
+        Err(y) => return Err(YahooError::RequestFailed { source: y }),
+    };
 
-   let response = serde_json::from_str::<Response>(data).context(error::BadData)?;
-   Ok(response.context.dispatcher.stores)
+    let text = match response.text().await {
+        Ok(x) => x,
+        Err(y) => {
+            return Err(YahooError::UnexpectedErrorRead {
+                url: url.clone().to_string(),
+                source: y,
+            })
+        }
+    };
+
+    let line = match Cursor::new(text.clone())
+        .lines()
+        .map(|line| line.unwrap())
+        .filter(|line| line.trim().starts_with(DATA_VAR))
+        .next()
+    {
+        Some(x) => x,
+        None => {
+            return Err(YahooError::MissingData {
+                reason: "No quote data".to_string(),
+            })
+        }
+    };
+
+    let data = line
+        .trim()
+        .trim_start_matches(DATA_VAR)
+        .trim_start_matches(|c| c == ' ' || c == '=')
+        .trim_end_matches(';');
+
+    let response = match serde_json::from_str::<YahooResponse>(data) {
+        Ok(x) => x,
+        Err(y) => return Err(YahooError::BadData { source: y }),
+    };
+    Ok(response.context.dispatcher.stores)
 }

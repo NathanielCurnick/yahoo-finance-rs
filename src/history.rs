@@ -1,46 +1,82 @@
 use chrono::{DateTime, Utc};
-use snafu::{ensure, OptionExt};
 
-use crate::{error, yahoo, Bar, Interval, Result};
+use crate::{error::YahooError, yahoo, Bar, Interval};
 
-fn aggregate_bars(data: yahoo::Data) -> Result<Vec<Bar>> {
-   let mut result = Vec::new();
+fn aggregate_bars(data: yahoo::Data) -> Result<Vec<Bar>, YahooError> {
+    let mut result = Vec::new();
 
-   let timestamps = &data.timestamps;
-   let quotes = &data.indicators.quotes;
+    let timestamps = &data.timestamps;
+    let quotes = &data.indicators.quotes;
 
-   // if we have no timestamps & no quotes we'll assume there is no data
-   if timestamps.is_empty() && quotes.is_empty() { return Ok(result); }
+    // if we have no timestamps & no quotes we'll assume there is no data
+    if timestamps.is_empty() && quotes.is_empty() {
+        return Ok(result);
+    }
 
-   // otherwise see if one is empty and reflects bad data from Yahoo!
-   ensure!(!timestamps.is_empty(), error::MissingData { reason: "no timestamps for OHLCV data" });
-   ensure!(!quotes.is_empty(), error::MissingData { reason: "no OHLCV data" });
+    // otherwise see if one is empty and reflects bad data from Yahoo!
 
-   // make sure timestamps lines up with the OHLCV data
-   let quote = &quotes[0];
-   ensure!(timestamps.len() == quote.volumes.len(), error::MissingData { reason: "timestamps do not line up with OHLCV data" });
-   ensure!(timestamps.len() == quote.opens.len(), error::MissingData { reason: "'open' values do not line up the timestamps" });
-   ensure!(timestamps.len() == quote.highs.len(), error::MissingData { reason: "'high' values do not line up the timestamps" });
-   ensure!(timestamps.len() == quote.lows.len(), error::MissingData { reason: "'low' values do not line up the timestamps" });
-   ensure!(timestamps.len() == quote.closes.len(), error::MissingData { reason: "'close' values do not line up the timestamps" });
+    if timestamps.is_empty() {
+        return Err(YahooError::MissingData {
+            reason: "No timestamp for OHLCV data".to_string(),
+        });
+    };
 
-   #[allow(clippy::needless_range_loop)]
-   for i in 0..timestamps.len() {
-      // skip days where we have incomplete data
-      if quote.opens[i].is_none() || quote.highs[i].is_none() || quote.lows[i].is_none() || quote.closes[i].is_none() {
-         continue;
-      }
+    if quotes.is_empty() {
+        return Err(YahooError::MissingData {
+            reason: "No OHLCV data".to_string(),
+        });
+    };
 
-      result.push(Bar {
-         timestamp: timestamps[i] * 1000,
-         open: quote.opens[i].context(error::InternalLogic{ reason: "missing open not caught" })?,
-         high: quote.highs[i].context(error::InternalLogic{ reason: "missing high not caught" })?,
-         low: quote.lows[i].context(error::InternalLogic{ reason: "missing low not caught" })?,
-         close: quote.closes[i].context(error::InternalLogic{ reason: "missing close not caught" })?,
-         volume: quote.volumes[i],
-      })
-   }
-   Ok(result)
+    // make sure timestamps lines up with the OHLCV data
+    let quote = &quotes[0];
+
+    if timestamps.len() != quote.volumes.len() {
+        return Err(YahooError::MissingData {
+            reason: "Timestamps do not line up with OHLCV data".to_string(),
+        });
+    };
+    if timestamps.len() != quote.opens.len() {
+        return Err(YahooError::MissingData {
+            reason: "Open values do not line up with timestamps".to_string(),
+        });
+    };
+    if timestamps.len() != quote.highs.len() {
+        return Err(YahooError::MissingData {
+            reason: "High values do not line up with the timestamps".to_string(),
+        });
+    };
+    if timestamps.len() != quote.lows.len() {
+        return Err(YahooError::MissingData {
+            reason: "Low values do not line up with timestamps".to_string(),
+        });
+    };
+    if timestamps.len() != quote.closes.len() {
+        return Err(YahooError::MissingData {
+            reason: "Close values do not line up with the timestamps".to_string(),
+        });
+    };
+
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..timestamps.len() {
+        // skip days where we have incomplete data
+        if quote.opens[i].is_none()
+            || quote.highs[i].is_none()
+            || quote.lows[i].is_none()
+            || quote.closes[i].is_none()
+        {
+            continue;
+        }
+
+        result.push(Bar {
+            timestamp: timestamps[i] * 1000,
+            open: quote.opens[i].unwrap(),
+            high: quote.highs[i].unwrap(),
+            low: quote.lows[i].unwrap(),
+            close: quote.closes[i].unwrap(),
+            volume: quote.volumes[i],
+        })
+    }
+    Ok(result)
 }
 
 /// Retrieves (at most) 6 months worth of OCLHV data for a symbol
@@ -57,15 +93,15 @@ fn aggregate_bars(data: yahoo::Data) -> Result<Vec<Bar>> {
 /// async fn main() {
 ///    match history::retrieve("AAPL").await {
 ///       Err(e) => println!("Failed to call Yahoo: {:?}", e),
-///       Ok(data) => 
+///       Ok(data) =>
 ///          for bar in &data {
 ///             println!("On {} Apple closed at ${:.2}", bar.datetime().format("%b %e %Y"), bar.close)
 ///          }
 ///    }
 /// }
 /// ```
-pub async fn retrieve(symbol: &str) -> Result<Vec<Bar>> {
-   aggregate_bars(yahoo::load_daily(symbol, Interval::_6mo).await?)
+pub async fn retrieve(symbol: &str) -> Result<Vec<Bar>, YahooError> {
+    aggregate_bars(yahoo::load_daily(symbol, Interval::_6mo).await?)
 }
 
 /// Retrieves a configurable amount of OCLHV data for a symbol
@@ -84,18 +120,21 @@ pub async fn retrieve(symbol: &str) -> Result<Vec<Bar>> {
 /// async fn main() {
 ///    match history::retrieve_interval("AAPL", Interval::_5d).await {
 ///       Err(e) => println!("Failed to call Yahoo: {:?}", e),
-///       Ok(data) => 
+///       Ok(data) =>
 ///          for bar in &data {
 ///             println!("On {} Apple closed at ${:.2}", bar.datetime().format("%b %e %Y"), bar.close)
 ///          }
 ///    }
 /// }
 /// ```
-pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<Vec<Bar>> {
-   // pre-conditions
-   ensure!(!interval.is_intraday(), error::NoIntraday { interval });
+pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<Vec<Bar>, YahooError> {
+    // pre-conditions
 
-   aggregate_bars(yahoo::load_daily(symbol, interval).await?)
+    if interval.is_intraday() {
+        return Err(YahooError::NoIntraday { interval: interval });
+    };
+
+    aggregate_bars(yahoo::load_daily(symbol, interval).await?)
 }
 
 /// Retrieves OCLHV data for a symbol between a start and end date.
@@ -120,10 +159,17 @@ pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<Vec<B
 ///    }
 /// }
 /// ```
-pub async fn retrieve_range(symbol: &str, start: DateTime<Utc>, end: Option<DateTime<Utc>>) -> Result<Vec<Bar>> {
-   // pre-conditions
-   let _end = end.unwrap_or_else(Utc::now);
-   ensure!(_end.signed_duration_since(start).num_seconds() > 0, error::InvalidStartDate);
+pub async fn retrieve_range(
+    symbol: &str,
+    start: DateTime<Utc>,
+    end: Option<DateTime<Utc>>,
+) -> Result<Vec<Bar>, YahooError> {
+    // pre-conditions
+    let end = end.unwrap_or_else(Utc::now);
 
-   aggregate_bars(yahoo::load_daily_range(symbol, start.timestamp(), _end.timestamp()).await?)
+    if end.signed_duration_since(start).num_seconds() > 0 {
+        return Err(YahooError::InvalidStartDate);
+    };
+
+    aggregate_bars(yahoo::load_daily_range(symbol, start.timestamp(), end.timestamp()).await?)
 }
