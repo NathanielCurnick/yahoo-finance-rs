@@ -1,16 +1,32 @@
+use crate::market_utils::interval::Interval;
+use crate::{error::YahooError, yahoo};
 use chrono::{DateTime, Utc};
+use polars::datatypes::DataType::{Float64, Int64};
+use polars::prelude::{DataFrame, NamedFrom, Series};
 
-use crate::{error::YahooError, yahoo, Bar, Interval};
+fn empty_ohlcv_dataframe() -> DataFrame {
+    let timestamp = Series::new_empty("timestamp", &Int64);
+    let open = Series::new_empty("open", &Float64);
+    let high = Series::new_empty("high", &Float64);
+    let low = Series::new_empty("low", &Float64);
+    let close = Series::new_empty("close", &Float64);
+    // let adj_close = Series::new_empty("adj_close", &Float64);
 
-fn aggregate_bars(data: yahoo::Data) -> Result<Vec<Bar>, YahooError> {
-    let mut result = Vec::new();
+    // let df = DataFrame::new(vec![timestamp, open, high, low, close, adj_close]).unwrap();
+    let df = DataFrame::new(vec![timestamp, open, high, low, close]).unwrap();
 
+    return df;
+}
+
+fn aggregate_bars(data: yahoo::Data) -> Result<DataFrame, YahooError> {
     let timestamps = &data.timestamps;
+    let timestamps: Vec<i64> = timestamps.into_iter().map(|x| x * 1000).collect();
+
     let quotes = &data.indicators.quotes;
 
     // if we have no timestamps & no quotes we'll assume there is no data
     if timestamps.is_empty() && quotes.is_empty() {
-        return Ok(result);
+        return Ok(empty_ohlcv_dataframe());
     }
 
     // otherwise see if one is empty and reflects bad data from Yahoo!
@@ -55,27 +71,27 @@ fn aggregate_bars(data: yahoo::Data) -> Result<Vec<Bar>, YahooError> {
             reason: "Close values do not line up with the timestamps".to_string(),
         });
     };
+    if timestamps.len() != quote.closes.len() {
+        return Err(YahooError::MissingData {
+            reason: "Close values do not line up with the timestamps".to_string(),
+        });
+    };
 
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..timestamps.len() {
-        // skip days where we have incomplete data
-        if quote.opens[i].is_none()
-            || quote.highs[i].is_none()
-            || quote.lows[i].is_none()
-            || quote.closes[i].is_none()
-        {
-            continue;
+    let result = match DataFrame::new(vec![
+        Series::new("timestamp", timestamps),
+        Series::new("open", quote.opens.clone()),
+        Series::new("high", quote.highs.clone()),
+        Series::new("low", quote.lows.clone()),
+        Series::new("close", quote.closes.clone()),
+        Series::new("volume", quote.volumes.clone()),
+    ]) {
+        Ok(x) => x,
+        Err(y) => {
+            return Err(YahooError::InternalLogic {
+                reason: y.to_string(),
+            })
         }
-
-        result.push(Bar {
-            timestamp: timestamps[i] * 1000,
-            open: quote.opens[i].unwrap(),
-            high: quote.highs[i].unwrap(),
-            low: quote.lows[i].unwrap(),
-            close: quote.closes[i].unwrap(),
-            volume: quote.volumes[i],
-        })
-    }
+    };
     Ok(result)
 }
 
@@ -100,7 +116,7 @@ fn aggregate_bars(data: yahoo::Data) -> Result<Vec<Bar>, YahooError> {
 ///    }
 /// }
 /// ```
-pub async fn retrieve(symbol: &str) -> Result<Vec<Bar>, YahooError> {
+pub async fn retrieve(symbol: &str) -> Result<DataFrame, YahooError> {
     aggregate_bars(yahoo::load_daily(symbol, Interval::_6mo).await?)
 }
 
@@ -127,7 +143,7 @@ pub async fn retrieve(symbol: &str) -> Result<Vec<Bar>, YahooError> {
 ///    }
 /// }
 /// ```
-pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<Vec<Bar>, YahooError> {
+pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<DataFrame, YahooError> {
     // pre-conditions
 
     if interval.is_intraday() {
@@ -163,7 +179,7 @@ pub async fn retrieve_range(
     symbol: &str,
     start: DateTime<Utc>,
     end: Option<DateTime<Utc>>,
-) -> Result<Vec<Bar>, YahooError> {
+) -> Result<DataFrame, YahooError> {
     // pre-conditions
     let end = end.unwrap_or_else(Utc::now);
 

@@ -5,7 +5,8 @@ use serde::Deserialize;
 
 use std::env;
 
-use crate::{error::YahooError, Interval};
+use crate::error::YahooError;
+use crate::market_utils::interval::Interval;
 
 const BASE_URL: &'static str = "https://query1.finance.yahoo.com/v8/finance/chart/";
 

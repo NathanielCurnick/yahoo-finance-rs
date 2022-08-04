@@ -64,8 +64,6 @@
 #[macro_use]
 mod macros;
 
-pub use market_finance::{Bar, Interval, Quote, Timestamped, TradingSession};
-
 mod error;
 
 #[derive(Debug)]
@@ -83,3 +81,6 @@ pub use streaming::Streamer;
 /// Symbol profile
 mod profile;
 pub use profile::Profile;
+
+/// Market utilities
+pub mod market_utils;

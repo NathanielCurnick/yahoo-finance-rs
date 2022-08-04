@@ -1,5 +1,6 @@
-use crate::Interval;
 use reqwest;
+
+use crate::market_utils::interval::Interval;
 
 /// All possible errors that can occur when using yahoo finance
 #[derive(Debug)]

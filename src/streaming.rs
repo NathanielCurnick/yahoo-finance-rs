@@ -5,10 +5,10 @@ use serde::Serialize;
 use std::sync::{mpsc, Arc, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-use crate::yahoo::{pricing_data::MarketHoursType, PricingData};
-use crate::TradingSession;
-
-use super::Quote;
+use crate::{
+    market_utils::quote::{Quote, TradingSession},
+    yahoo::{pricing_data::MarketHoursType, PricingData},
+};
 
 #[derive(Debug, Clone, Serialize)]
 struct Subs {
