@@ -31,6 +31,8 @@ tokio-tungstenite = "0.17.2"
 url = "2.1"
 polars = "0.22.8"
 
+plotly = "0.7.0"
+
 [dev-dependencies]
 mockito = "0.31.0"
 tokio-test = "0.4.2"

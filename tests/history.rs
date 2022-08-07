@@ -4,7 +4,8 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use tokio_test::block_on;
-use yahoo_finance::{history, Interval};
+use yahoo_finance::history;
+use yahoo_finance::market_utils::interval::Interval;
 
 fn base_mock(test_name: &str, symbol: &str, query: &str) -> std::io::Result<Mock> {
     // Tell the actual code to use a test URL rather than the live one

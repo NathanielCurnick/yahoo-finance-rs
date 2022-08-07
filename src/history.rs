@@ -1,6 +1,7 @@
 use crate::market_utils::interval::Interval;
 use crate::{error::YahooError, yahoo};
 use chrono::{DateTime, Utc};
+use plotly::{Candlestick, Plot};
 use polars::datatypes::DataType::{Float64, Int64};
 use polars::prelude::{DataFrame, NamedFrom, Series};
 
@@ -18,7 +19,7 @@ fn empty_ohlcv_dataframe() -> DataFrame {
     return df;
 }
 
-fn aggregate_bars(data: yahoo::Data) -> Result<DataFrame, YahooError> {
+fn aggregate_bars(data: yahoo::Data) -> Result<OHLCVData, YahooError> {
     let timestamps = &data.timestamps;
     let timestamps: Vec<i64> = timestamps.into_iter().map(|x| x * 1000).collect();
 
@@ -26,7 +27,7 @@ fn aggregate_bars(data: yahoo::Data) -> Result<DataFrame, YahooError> {
 
     // if we have no timestamps & no quotes we'll assume there is no data
     if timestamps.is_empty() && quotes.is_empty() {
-        return Ok(empty_ohlcv_dataframe());
+        return Ok(OHLCVData::empty());
     }
 
     // otherwise see if one is empty and reflects bad data from Yahoo!
@@ -77,22 +78,71 @@ fn aggregate_bars(data: yahoo::Data) -> Result<DataFrame, YahooError> {
         });
     };
 
-    let result = match DataFrame::new(vec![
-        Series::new("timestamp", timestamps),
-        Series::new("open", quote.opens.clone()),
-        Series::new("high", quote.highs.clone()),
-        Series::new("low", quote.lows.clone()),
-        Series::new("close", quote.closes.clone()),
-        Series::new("volume", quote.volumes.clone()),
-    ]) {
-        Ok(x) => x,
-        Err(y) => {
-            return Err(YahooError::InternalLogic {
-                reason: y.to_string(),
-            })
-        }
-    };
-    Ok(result)
+    Ok(OHLCVData {
+        timestamp: timestamps,
+        open: quote.opens.iter().map(|x| x.unwrap()).collect(),
+        high: quote.highs.iter().map(|x| x.unwrap()).collect(),
+        low: quote.lows.iter().map(|x| x.unwrap()).collect(),
+        close: quote.closes.iter().map(|x| x.unwrap()).collect(),
+        volume: quote.volumes.iter().map(|x| x.unwrap()).collect(),
+    })
+}
+
+pub struct OHLCVData {
+    pub timestamp: Vec<i64>,
+    pub open: Vec<f64>,
+    pub high: Vec<f64>,
+    pub low: Vec<f64>,
+    pub close: Vec<f64>,
+    pub volume: Vec<u64>,
+}
+
+impl OHLCVData {
+    pub fn empty() -> OHLCVData {
+        return OHLCVData {
+            timestamp: vec![],
+            open: vec![],
+            high: vec![],
+            low: vec![],
+            close: vec![],
+            volume: vec![],
+        };
+    }
+    pub fn height(&self) -> usize {
+        return self.timestamp.len();
+    }
+}
+
+//Plot functions
+impl OHLCVData {
+    pub fn plot_candlestick_interactive(&self) {
+        let trace = Candlestick::new(
+            self.timestamp.clone(),
+            self.open.clone(),
+            self.high.clone(),
+            self.low.clone(),
+            self.close.clone(),
+        );
+
+        let mut plot = Plot::new();
+        plot.add_trace(trace);
+
+        plot.show();
+    }
+
+    pub fn plot_candlestick_inline(&self, div_id: &'static str) -> String {
+        let trace = Candlestick::new(
+            self.timestamp.clone(),
+            self.open.clone(),
+            self.high.clone(),
+            self.low.clone(),
+            self.close.clone(),
+        );
+
+        let mut plot = Plot::new();
+        plot.add_trace(trace);
+        return plot.to_inline_html(div_id);
+    }
 }
 
 /// Retrieves (at most) 6 months worth of OCLHV data for a symbol
@@ -116,7 +166,7 @@ fn aggregate_bars(data: yahoo::Data) -> Result<DataFrame, YahooError> {
 ///    }
 /// }
 /// ```
-pub async fn retrieve(symbol: &str) -> Result<DataFrame, YahooError> {
+pub async fn retrieve(symbol: &str) -> Result<OHLCVData, YahooError> {
     aggregate_bars(yahoo::load_daily(symbol, Interval::_6mo).await?)
 }
 
@@ -143,7 +193,7 @@ pub async fn retrieve(symbol: &str) -> Result<DataFrame, YahooError> {
 ///    }
 /// }
 /// ```
-pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<DataFrame, YahooError> {
+pub async fn retrieve_interval(symbol: &str, interval: Interval) -> Result<OHLCVData, YahooError> {
     // pre-conditions
 
     if interval.is_intraday() {
@@ -179,7 +229,7 @@ pub async fn retrieve_range(
     symbol: &str,
     start: DateTime<Utc>,
     end: Option<DateTime<Utc>>,
-) -> Result<DataFrame, YahooError> {
+) -> Result<OHLCVData, YahooError> {
     // pre-conditions
     let end = end.unwrap_or_else(Utc::now);
 
